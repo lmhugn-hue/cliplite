@@ -21,7 +21,9 @@ export function renderText(style: TextStyle): HTMLCanvasElement {
   measure.font = font;
   const lineHeight = size * 1.25;
   const stroke = style.strokeWidth * k;
-  const pad = Math.ceil(stroke + size * (style.background ? 0.35 : 0.1));
+  const shadow = style.shadow;
+  const shadowPad = shadow ? Math.ceil((Math.abs(shadow.x) + Math.abs(shadow.y) + shadow.blur) * k) : 0;
+  const pad = Math.ceil(stroke + size * (style.background ? 0.35 : 0.1)) + shadowPad;
   const textW = Math.max(1, ...lines.map((l) => measure.measureText(l).width));
   const w = Math.ceil(textW + pad * 2);
   const h = Math.ceil(lineHeight * lines.length + pad * 2);
@@ -44,13 +46,21 @@ export function renderText(style: TextStyle): HTMLCanvasElement {
   const x = style.align === 'left' ? pad : style.align === 'right' ? w - pad : w / 2;
   lines.forEach((line, i) => {
     const y = pad + lineHeight * (i + 0.5);
+    if (shadow) {
+      g.shadowColor = shadow.color;
+      g.shadowBlur = shadow.blur * k;
+      g.shadowOffsetX = shadow.x * k;
+      g.shadowOffsetY = shadow.y * k;
+    }
+    g.fillStyle = style.color;
+    g.fillText(line, x, y);
+    g.shadowColor = 'transparent';
     if (stroke > 0) {
       g.strokeStyle = style.strokeColor;
       g.lineWidth = stroke * 2;
       g.strokeText(line, x, y);
+      g.fillText(line, x, y);
     }
-    g.fillStyle = style.color;
-    g.fillText(line, x, y);
   });
 
   if (cache.size > 200) cache.delete(cache.keys().next().value!);

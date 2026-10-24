@@ -87,7 +87,9 @@ input[type='range'] { accent-color: var(--accent); }
 
 .text-grid, .filter-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
 .filter-grid { grid-template-columns: repeat(3, 1fr); }
-.text-tile { height: 64px; justify-content: center; font-size: 16px; background: #101012; }
+.text-tile { height: 64px; justify-content: center; font-size: 16px; background: #101012; overflow: hidden; }
+.text-tile span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preset-label { margin-top: 14px; font-weight: 700; color: var(--text); }
 .filter-tile { flex-direction: column; padding: 4px; gap: 4px; background: none; font-size: 11px; }
 .filter-thumb { width: 100%; aspect-ratio: 1; border-radius: 5px; background: #222 center / cover no-repeat; border: 2px solid transparent; }
 .filter-tile.active .filter-thumb { border-color: var(--accent); }

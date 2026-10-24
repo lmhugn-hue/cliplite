@@ -51,10 +51,10 @@ export function dropMediaAt(media: MediaRecord, trackId: string | null, start: n
   store.select(clip.id);
 }
 
-export function addText(style?: Partial<TextStyle>) {
+export function addText(style?: Partial<TextStyle>, place?: Partial<Pick<Clip, 'x' | 'y' | 'scale'>>) {
   const t = clock.time;
   const clip = makeClip('text', '', t, undefined, style as TextStyle);
-  store.commit((p) => placeClip(p, clip));
+  store.commit((p) => placeClip(p, { ...clip, ...place }));
   store.select(clip.id);
 }
 

@@ -35,6 +35,8 @@ export interface TextStyle {
   bold: boolean;
   italic: boolean;
   align: 'left' | 'center' | 'right';
+  /** Drop shadow in the same pixel space as fontSize. Omitted when the style has none. */
+  shadow?: { color: string; blur: number; x: number; y: number };
 }
 
 export interface Clip {

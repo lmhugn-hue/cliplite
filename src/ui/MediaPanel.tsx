@@ -4,6 +4,7 @@ import { db } from '../db';
 import { lutPreview, parseCube } from '../lut';
 import { importFiles, removeMedia } from '../media';
 import { formatTime, uid } from '../model';
+import { FULL_CAR_PRESETS } from '../presets/fullcar';
 import { store, useStore } from '../store';
 import type { LutPreset, TextStyle } from '../types';
 import { Icon } from './controls';
@@ -101,28 +102,40 @@ const TEXT_PRESETS: { name: string; style: Partial<TextStyle> }[] = [
   { name: 'Serif', style: { fontSize: 80, fontFamily: 'Georgia', bold: false, italic: true, content: 'Chapter one' } },
 ];
 
+function TextTile({ name, style, onClick }: { name: string; style: Partial<TextStyle>; onClick: () => void }) {
+  return (
+    <button className="text-tile" onClick={onClick}>
+      <span
+        style={{
+          fontFamily: style.fontFamily ?? 'Segoe UI',
+          fontWeight: style.bold === false ? 400 : 700,
+          fontStyle: style.italic ? 'italic' : 'normal',
+          color: style.color ?? '#fff',
+          background: style.background ?? 'transparent',
+          padding: style.background ? '2px 6px' : 0,
+          borderRadius: 4,
+          WebkitTextStroke: style.strokeWidth ? `1px ${style.strokeColor}` : undefined,
+        }}
+      >
+        {name}
+      </span>
+    </button>
+  );
+}
+
 function TextTab() {
   return (
     <>
       <p className="hint">Adds a text layer at the playhead.</p>
       <div className="text-grid">
         {TEXT_PRESETS.map((p) => (
-          <button key={p.name} className="text-tile" onClick={() => addText(p.style)}>
-            <span
-              style={{
-                fontFamily: p.style.fontFamily ?? 'Segoe UI',
-                fontWeight: p.style.bold === false ? 400 : 700,
-                fontStyle: p.style.italic ? 'italic' : 'normal',
-                color: p.style.color ?? '#fff',
-                background: p.style.background ?? 'transparent',
-                padding: p.style.background ? '2px 6px' : 0,
-                borderRadius: 4,
-                WebkitTextStroke: p.style.strokeWidth ? `1px ${p.style.strokeColor}` : undefined,
-              }}
-            >
-              {p.name}
-            </span>
-          </button>
+          <TextTile key={p.name} name={p.name} style={p.style} onClick={() => addText(p.style)} />
+        ))}
+      </div>
+      <p className="hint preset-label">Full Car</p>
+      <div className="text-grid">
+        {FULL_CAR_PRESETS.map((p, i) => (
+          <TextTile key={`${p.name}-${i}`} name={p.name} style={p.style} onClick={() => addText(p.style, { x: p.x ?? 0, y: p.y ?? 0 })} />
         ))}
       </div>
     </>
