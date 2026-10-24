@@ -1,0 +1,14 @@
+---
+description: Resume context for the ClipLite project and the CapCut investigation
+alwaysApply: true
+---
+
+# ClipLite session
+
+Read `SESSION.md` before changing this project. It is the record of how ClipLite was built.
+
+- The app is ClipLite in `capcut-lite`. Live site: https://lmhugn-hue.github.io/cliplite/ (public repo `lmhugn-hue/cliplite`, Pages via GitHub Actions on `main`).
+- This is a clean-room browser editor, not a CapCut port. Do not extract, decrypt, or redistribute CapCut Pro or paid assets.
+- Native ARM64 CapCut libraries were not decompiled here. REA on this Windows machine only accepts PE.
+- Full Car captions live in `src/presets/fullcar.ts`. Do not commit the raw `Full Car/` folder; its draft contains a CapCut user id and local font paths.
+- `gh` is `C:\Program Files\GitHub CLI\gh.exe` and may be missing from PATH in old terminals.
