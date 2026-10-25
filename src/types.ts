@@ -39,6 +39,12 @@ export interface TextStyle {
   shadow?: { color: string; blur: number; x: number; y: number };
 }
 
+/** A point on a speed ramp. `at` runs from 0 at the first source frame to 1 at the last. */
+export interface SpeedPoint {
+  at: number;
+  speed: number;
+}
+
 export interface Clip {
   id: string;
   trackId: string;
@@ -46,11 +52,20 @@ export interface Clip {
   mediaId?: string;
   /** Position on the timeline, in seconds. */
   start: number;
-  /** Length on the timeline, in seconds (already divided by speed). */
+  /** Length on the timeline, in seconds. */
   duration: number;
   /** Offset into the source media, in source seconds. */
   in: number;
+  /** Average playback rate. Source span is `duration * speed`, except while `hold` is set. */
   speed: number;
+  /** Two or more points replace the flat rate. `speed` is then their average. */
+  curve: SpeedPoint[];
+  /** When set, preview playback keeps the original pitch as the rate changes. */
+  preservePitch: boolean;
+  /** Play the source range from its end back to its start. */
+  reversed: boolean;
+  /** Show the single source frame at `in` for the whole clip. */
+  hold: boolean;
   volume: number;
   opacity: number;
   /** Offset of the layer centre from the canvas centre, as a fraction of canvas width/height. */

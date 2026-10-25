@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { applyLookToAll, updateClip } from '../actions';
-import { clipEnd, mainTrack, overlaps, rippleMain } from '../model';
+import { applyLookToAll, commitTiming, freezeAtPlayhead, updateClip } from '../actions';
+import { curveAverage } from '../model';
 import { store, useStore } from '../store';
 import type { Clip, TextStyle } from '../types';
 import { Row, Section, Slider } from './controls';
@@ -57,22 +57,24 @@ function ClipInspector({ clip }: { clip: Clip }) {
   const set = (patch: Partial<Clip>, key: string) => updateClip(clip.id, patch, `${clip.id}:${key}`);
   const setText = (patch: Partial<TextStyle>, key: string) => updateClip(clip.id, (c) => ({ text: { ...c.text!, ...patch } }), `${clip.id}:t:${key}`);
   const maxFade = Math.max(0, clip.duration / 2);
-
-  const setSpeed = (speed: number) => {
-    updateClip(
-      clip.id,
-      (c) => {
-        let duration = (c.duration * c.speed) / speed;
-        if (media) duration = Math.min(duration, (media.duration - c.in) / speed);
-        const p = store.get().project;
-        const next = p.clips.filter((x) => x.trackId === c.trackId && x.start >= clipEnd(c) - 1e-6).reduce((m, x) => Math.min(m, x.start), Infinity);
-        const magneticMain = p.magnetic && c.trackId === mainTrack(p)?.id;
-        if (!magneticMain && overlaps(p, c.trackId, c.start, c.start + duration, c.id)) duration = Math.min(duration, next - c.start);
-        return { speed, duration };
-      },
-      `${clip.id}:speed`,
-    );
-    if (clip.trackId === mainTrack(store.get().project)?.id) store.commit(rippleMain, `${clip.id}:speed`);
+  const ramp = clip.curve.length >= 2;
+  const setSpeed = (speed: number) => commitTiming(clip.id, speed, { curve: [] });
+  const setRamp = (on: boolean) => {
+    if (!on) {
+      commitTiming(clip.id, clip.speed || 1, { curve: [] });
+      return;
+    }
+    const start = Math.min(8, Math.max(0.25, (clip.speed || 1) * 0.5));
+    const end = Math.min(8, Math.max(0.25, (clip.speed || 1) * 2));
+    const curve = [
+      { at: 0, speed: start },
+      { at: 1, speed: end },
+    ];
+    commitTiming(clip.id, curveAverage(curve), { curve });
+  };
+  const setCurveSpeed = (index: number, speed: number) => {
+    const curve = clip.curve.map((p, i) => (i === index ? { ...p, speed } : p));
+    commitTiming(clip.id, curveAverage(curve), { curve });
   };
 
   return (
@@ -147,14 +149,39 @@ function ClipInspector({ clip }: { clip: Clip }) {
 
         {tab === 'speed' && (
           <Section title="Speed">
-            <Slider label="Speed" min={0.1} max={10} step={0.05} value={clip.speed} format={(v) => `${v.toFixed(2)}x`} resetTo={1} onChange={setSpeed} />
-            <div className="btn-group wrap">
-              {[0.25, 0.5, 1, 1.5, 2, 4].map((s) => (
-                <button key={s} className={clip.speed === s ? 'on' : ''} onClick={() => setSpeed(s)}>
-                  {s}x
-                </button>
-              ))}
-            </div>
+            {clip.hold ? (
+              <p className="hint">This clip holds one frame. Drag its edge to change how long it stays.</p>
+            ) : (
+              <>
+                <Slider label="Speed" min={0.1} max={10} step={0.05} value={clip.speed} format={(v) => `${v.toFixed(2)}x`} resetTo={1} onChange={setSpeed} />
+                <div className="btn-group wrap">
+                  {[0.25, 0.5, 1, 1.5, 2, 4].map((s) => (
+                    <button key={s} className={!ramp && clip.speed === s ? 'on' : ''} onClick={() => setSpeed(s)}>
+                      {s}x
+                    </button>
+                  ))}
+                </div>
+                <Row label="Speed ramp">
+                  <input type="checkbox" checked={ramp} onChange={(e) => setRamp(e.target.checked)} />
+                </Row>
+                {ramp && (
+                  <>
+                    <Slider label="Start" min={0.25} max={8} step={0.05} value={clip.curve[0].speed} format={(v) => `${v.toFixed(2)}x`} onChange={(v) => setCurveSpeed(0, v)} />
+                    <Slider label="End" min={0.25} max={8} step={0.05} value={clip.curve[clip.curve.length - 1].speed} format={(v) => `${v.toFixed(2)}x`} onChange={(v) => setCurveSpeed(clip.curve.length - 1, v)} />
+                  </>
+                )}
+                <Row label="Reverse">
+                  <input type="checkbox" checked={clip.reversed} onChange={(e) => set({ reversed: e.target.checked }, 'reverse')} />
+                </Row>
+                <Row label="Keep pitch">
+                  <input type="checkbox" checked={clip.preservePitch} onChange={(e) => set({ preservePitch: e.target.checked }, 'pitch')} />
+                </Row>
+                <p className="hint">Keep pitch applies in preview. Export still shifts pitch with the speed. Reversed audio is included in the export.</p>
+              </>
+            )}
+            {clip.kind === 'video' && (
+              <button onClick={freezeAtPlayhead}>Freeze frame</button>
+            )}
             <p className="hint">Duration: {clip.duration.toFixed(2)}s</p>
           </Section>
         )}

@@ -1,4 +1,4 @@
-import type { Aspect, Clip, ClipKind, MediaRecord, Project, TextStyle, Track, TrackKind } from './types';
+import type { Aspect, Clip, ClipKind, MediaRecord, Project, SpeedPoint, TextStyle, Track, TrackKind } from './types';
 
 export const MIN_CLIP = 0.1;
 export const IMAGE_DEFAULT_DURATION = 5;
@@ -80,6 +80,10 @@ export function makeClip(kind: ClipKind, trackId: string, start: number, media?:
     duration,
     in: 0,
     speed: 1,
+    curve: [],
+    preservePitch: true,
+    reversed: false,
+    hold: false,
     volume: 1,
     opacity: 1,
     x: 0,
@@ -163,16 +167,33 @@ export function splitClip(p: Project, clipId: string, t: number): { project: Pro
   const c = p.clips.find((x) => x.id === clipId);
   if (!c || t <= c.start + MIN_CLIP / 2 || t >= clipEnd(c) - MIN_CLIP / 2) return null;
   const leftDur = t - c.start;
-  const left: Clip = { ...c, duration: leftDur, fadeOut: 0 };
+  const rightDur = c.duration - leftDur;
+  const rightId = uid();
+  if (c.hold || c.kind === 'text' || c.kind === 'image') {
+    const left: Clip = { ...c, duration: leftDur, fadeOut: 0 };
+    const right: Clip = { ...c, id: rightId, start: t, duration: rightDur, fadeIn: 0 };
+    return { project: { ...p, clips: p.clips.flatMap((x) => (x.id === c.id ? [left, right] : [x])) }, rightId };
+  }
+  const span = c.duration * c.speed;
+  const src = Math.min(c.in + span, Math.max(c.in, sourceTime(c, t)));
+  const leftSpan = c.reversed ? c.in + span - src : src - c.in;
+  const rightSpan = Math.max(0, span - leftSpan);
+  const u = span > 0 ? (src - c.in) / span : 0;
+  const [leftCurve, rightCurve] = c.reversed
+    ? [sliceCurve(c.curve, u, 1), sliceCurve(c.curve, 0, u)]
+    : [sliceCurve(c.curve, 0, u), sliceCurve(c.curve, u, 1)];
+  const left: Clip = { ...c, duration: leftDur, fadeOut: 0, in: c.reversed ? src : c.in, speed: leftSpan / leftDur, curve: leftCurve };
   const right: Clip = {
     ...c,
-    id: uid(),
+    id: rightId,
     start: t,
-    duration: c.duration - leftDur,
-    in: c.in + leftDur * c.speed,
+    duration: rightDur,
+    in: c.reversed ? c.in : src,
     fadeIn: 0,
+    speed: rightSpan / rightDur,
+    curve: rightCurve,
   };
-  return { project: { ...p, clips: p.clips.flatMap((x) => (x.id === c.id ? [left, right] : [x])) }, rightId: right.id };
+  return { project: { ...p, clips: p.clips.flatMap((x) => (x.id === c.id ? [left, right] : [x])) }, rightId };
 }
 
 /** Removes tracks left empty, keeping at least the main video track. */
@@ -183,9 +204,110 @@ export function pruneTracks(p: Project): Project {
   return tracks.length === p.tracks.length ? p : { ...p, tracks };
 }
 
+/** Fills fields added after the first saved projects. */
+export function normalizeClip(c: Clip): Clip {
+  return { ...c, curve: c.curve ?? [], preservePitch: c.preservePitch ?? true, reversed: c.reversed ?? false, hold: c.hold ?? false };
+}
+
+function clampSpeed(speed: number) {
+  return Math.min(16, Math.max(0.1, speed));
+}
+
+function normalizeCurve(points: SpeedPoint[]): SpeedPoint[] {
+  const sorted = points
+    .filter((p) => Number.isFinite(p.at) && Number.isFinite(p.speed))
+    .map((p) => ({ at: Math.min(1, Math.max(0, p.at)), speed: clampSpeed(p.speed) }))
+    .sort((a, b) => a.at - b.at);
+  if (sorted.length < 2) return [];
+  const first = sorted[0].at > 0.001 ? [{ at: 0, speed: sorted[0].speed }, ...sorted] : sorted;
+  const last = first[first.length - 1];
+  return last.at < 0.999 ? [...first, { at: 1, speed: last.speed }] : first;
+}
+
+function speedAlong(points: SpeedPoint[], at: number) {
+  const pts = normalizeCurve(points);
+  if (!pts.length) return 1;
+  if (at <= pts[0].at) return pts[0].speed;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i];
+    const b = pts[i + 1];
+    if (at <= b.at) {
+      const u = b.at === a.at ? 0 : (at - a.at) / (b.at - a.at);
+      return a.speed + (b.speed - a.speed) * u;
+    }
+  }
+  return pts[pts.length - 1].speed;
+}
+
+/** Integral of du/speed across one curve segment. */
+function segmentTime(du: number, a: number, b: number) {
+  return Math.abs(b - a) < 1e-4 ? du / a : (du * Math.log(b / a)) / (b - a);
+}
+
+/** Average rate of a ramp. A flat clip uses `clip.speed` itself. */
+export function curveAverage(points: SpeedPoint[]) {
+  const pts = normalizeCurve(points);
+  if (pts.length < 2) return 1;
+  let inv = 0;
+  for (let i = 0; i < pts.length - 1; i++) inv += segmentTime(pts[i + 1].at - pts[i].at, pts[i].speed, pts[i + 1].speed);
+  return inv > 0 ? 1 / inv : 1;
+}
+
+/** Source fraction 0..1 for a timeline fraction 0..1, before reverse is applied. */
+function sourceFraction(points: SpeedPoint[], timelineFraction: number) {
+  const pts = normalizeCurve(points);
+  const avg = curveAverage(pts);
+  const target = Math.min(1, Math.max(0, timelineFraction)) / avg;
+  let acc = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const du = pts[i + 1].at - pts[i].at;
+    const seg = segmentTime(du, pts[i].speed, pts[i + 1].speed);
+    if (acc + seg >= target - 1e-8) {
+      const need = Math.max(0, target - acc);
+      const a = pts[i].speed;
+      const b = pts[i + 1].speed;
+      if (Math.abs(b - a) < 1e-4) return pts[i].at + need * a;
+      const s = a * Math.exp((need * (b - a)) / du);
+      return pts[i].at + ((s - a) / (b - a)) * du;
+    }
+    acc += seg;
+  }
+  return 1;
+}
+
+function sliceCurve(points: SpeedPoint[], u0: number, u1: number): SpeedPoint[] {
+  if (points.length < 2 || u1 - u0 < 1e-3) return [];
+  const lo = Math.min(u0, u1);
+  const hi = Math.max(u0, u1);
+  const inner = normalizeCurve(points).filter((p) => p.at > lo + 1e-4 && p.at < hi - 1e-4);
+  const picked = [{ at: lo, speed: speedAlong(points, lo) }, ...inner, { at: hi, speed: speedAlong(points, hi) }];
+  const span = hi - lo;
+  return picked.map((p) => ({ at: (p.at - lo) / span, speed: p.speed }));
+}
+
+/** Keeps the source span and retimes the clip to a new average rate. */
+export function retimed(c: Clip, speed: number, extra: Partial<Clip> = {}): Partial<Clip> {
+  const span = c.hold ? 0 : c.duration * c.speed;
+  return { ...extra, speed, duration: c.hold ? c.duration : span / speed };
+}
+
 /** Source-media time shown at timeline time t. */
 export function sourceTime(c: Clip, t: number) {
-  return c.in + (t - c.start) * c.speed;
+  if (c.hold) return c.in;
+  const local = Math.min(Math.max(t - c.start, 0), c.duration);
+  const progress = c.duration > 0 ? local / c.duration : 0;
+  const along = c.curve.length >= 2 ? sourceFraction(c.curve, progress) : progress;
+  const span = c.duration * c.speed;
+  return c.in + (c.reversed ? 1 - along : along) * span;
+}
+
+/** Playback rate at timeline time t. Reverse reports the forward magnitude. */
+export function rateAt(c: Clip, t: number) {
+  if (c.hold) return 0;
+  if (c.curve.length < 2) return c.speed;
+  const t2 = Math.min(clipEnd(c), t + 1 / 30);
+  if (t2 <= t + 1e-4) return c.speed;
+  return Math.min(16, Math.max(0.1, Math.abs(sourceTime(c, t2) - sourceTime(c, t)) / (t2 - t)));
 }
 
 /** Fade multiplier (0..1) at timeline time t. */
@@ -198,7 +320,7 @@ export function fadeFactor(c: Clip, t: number) {
 
 /** Longest timeline duration the clip may have, given its media and speed. */
 export function maxDuration(c: Clip, media?: MediaRecord) {
-  if (c.kind === 'image' || c.kind === 'text' || !media) return Infinity;
+  if (c.hold || c.kind === 'image' || c.kind === 'text' || !media) return Infinity;
   return (media.duration - c.in) / c.speed;
 }
 

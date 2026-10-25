@@ -17,7 +17,7 @@ import {
 } from 'mediabunny';
 import type { Clip, LutPreset, Project } from './types';
 import type { MediaEntry } from './store';
-import { clipEnd, outputSize, projectDuration } from './model';
+import { clipEnd, outputSize, projectDuration, sourceTime } from './model';
 import { Compositor } from './render/compositor';
 import { buildLayers, type FrameSource } from './render/layers';
 
@@ -35,6 +35,22 @@ export interface ExportOptions {
 }
 
 const SAMPLE_RATE = 48000;
+
+function takeSamples(src: AudioBuffer, startSec: number, durationSec: number, reverse: boolean) {
+  const rate = src.sampleRate;
+  const start = Math.max(0, Math.floor(startSec * rate));
+  const length = Math.max(1, Math.floor(durationSec * rate));
+  const out = new AudioBuffer({ length, numberOfChannels: src.numberOfChannels, sampleRate: rate });
+  for (let ch = 0; ch < src.numberOfChannels; ch++) {
+    const from = src.getChannelData(ch);
+    const to = out.getChannelData(ch);
+    for (let i = 0; i < length; i++) {
+      const idx = reverse ? start + length - 1 - i : start + i;
+      to[i] = from[Math.max(0, Math.min(from.length - 1, idx))] ?? 0;
+    }
+  }
+  return out;
+}
 
 async function mixAudio(p: Project, media: Record<string, MediaEntry>, duration: number): Promise<AudioBuffer | null> {
   const muted = new Set(p.tracks.filter((t) => t.muted).map((t) => t.id));
@@ -58,9 +74,6 @@ async function mixAudio(p: Project, media: Record<string, MediaEntry>, duration:
     }
     const buffer = decoded.get(clip.mediaId!);
     if (!buffer) continue;
-    const src = ctx.createBufferSource();
-    src.buffer = buffer;
-    src.playbackRate.value = clip.speed;
     const gain = ctx.createGain();
     const end = clipEnd(clip);
     gain.gain.setValueAtTime(clip.fadeIn > 0 ? 0 : clip.volume, clip.start);
@@ -69,8 +82,30 @@ async function mixAudio(p: Project, media: Record<string, MediaEntry>, duration:
       gain.gain.setValueAtTime(clip.volume, end - clip.fadeOut);
       gain.gain.linearRampToValueAtTime(0, end);
     }
-    src.connect(gain).connect(ctx.destination);
-    src.start(clip.start, clip.in, clip.duration * clip.speed);
+    gain.connect(ctx.destination);
+    const variable = clip.reversed || clip.curve.length >= 2;
+    if (!variable) {
+      const src = ctx.createBufferSource();
+      src.buffer = buffer;
+      src.playbackRate.value = clip.speed;
+      src.connect(gain);
+      src.start(clip.start, clip.in, clip.duration * clip.speed);
+      continue;
+    }
+    const slices = clip.curve.length >= 2 ? 24 : 1;
+    for (let i = 0; i < slices; i++) {
+      const t0 = clip.start + (clip.duration * i) / slices;
+      const t1 = clip.start + (clip.duration * (i + 1)) / slices;
+      const s0 = sourceTime(clip, t0);
+      const s1 = sourceTime(clip, Math.min(end - 1e-4, t1));
+      const span = Math.abs(s1 - s0);
+      if (span < 1e-4) continue;
+      const src = ctx.createBufferSource();
+      src.buffer = takeSamples(buffer, Math.min(s0, s1), span, s1 < s0);
+      src.playbackRate.value = span / (t1 - t0);
+      src.connect(gain);
+      src.start(t0, 0, span);
+    }
   }
   return ctx.startRendering();
 }
@@ -114,7 +149,7 @@ export async function exportProject(o: ExportOptions): Promise<Blob> {
 
   const frameTimes = function* (clip: Clip) {
     const first = Math.ceil(clip.start * fps - 1e-6);
-    for (let f = first; f < totalFrames && f / fps < clipEnd(clip); f++) yield clip.in + (f / fps - clip.start) * clip.speed;
+    for (let f = first; f < totalFrames && f / fps < clipEnd(clip); f++) yield sourceTime(clip, f / fps);
   };
 
   try {

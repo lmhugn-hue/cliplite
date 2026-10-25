@@ -5,10 +5,13 @@ import {
   insertTrack,
   makeClip,
   mainTrack,
+  MIN_CLIP,
   overlaps,
   placeClip,
   pruneTracks,
+  retimed,
   rippleMain,
+  sourceTime,
   splitClip,
   uid,
 } from './model';
@@ -17,6 +20,66 @@ import { clock, store } from './store';
 export function selectedClip(): Clip | undefined {
   const { project, selectedId } = store.get();
   return project.clips.find((c) => c.id === selectedId);
+}
+
+/** Changes the average rate while keeping the same source range, then closes gaps on the magnetic main track. */
+export function commitTiming(id: string, speed: number, extra: Partial<Clip> = {}) {
+  const { project, media } = store.get();
+  const current = project.clips.find((c) => c.id === id);
+  const record = current?.mediaId ? media[current.mediaId]?.record : undefined;
+  updateClip(
+    id,
+    (c) => {
+      let next = retimed(c, speed, extra);
+      let duration = next.duration ?? c.duration;
+      if (!c.hold && record && next.speed) duration = Math.min(duration, (record.duration - c.in) / next.speed);
+      const p = store.get().project;
+      const end = p.clips.filter((x) => x.trackId === c.trackId && x.start >= clipEnd(c) - 1e-6).reduce((m, x) => Math.min(m, x.start), Infinity);
+      const magneticMain = p.magnetic && c.trackId === mainTrack(p)?.id;
+      if (!magneticMain && overlaps(p, c.trackId, c.start, c.start + duration, c.id)) duration = Math.min(duration, Math.max(0.05, end - c.start));
+      return { ...next, duration };
+    },
+    `${id}:speed`,
+  );
+  if (current && current.trackId === mainTrack(store.get().project)?.id) store.commit(rippleMain, `${id}:speed`);
+}
+
+const FREEZE_LEN = 2;
+
+/** Inserts a still of the frame under the playhead and shifts the rest of that track forward. */
+export function freezeAtPlayhead() {
+  const t = clock.time;
+  const { project, media } = store.get();
+  const clip = project.clips.find((c) => c.kind === 'video' && !c.hold && t >= c.start && t < clipEnd(c) && media[c.mediaId!]);
+  if (!clip) {
+    store.toast('Move the playhead over a video clip to freeze a frame.');
+    return;
+  }
+  const frame = sourceTime(clip, t);
+  const interior = t > clip.start + MIN_CLIP / 2 && t < clipEnd(clip) - MIN_CLIP / 2;
+  const at = interior ? t : t - clip.start <= MIN_CLIP / 2 ? clip.start : clipEnd(clip);
+  store.commit((p) => {
+    const split = interior ? splitClip(p, clip.id, t) : null;
+    const base = split?.project ?? p;
+    const frozen: Clip = {
+      ...clip,
+      id: uid(),
+      start: at,
+      duration: FREEZE_LEN,
+      in: frame,
+      speed: 1,
+      curve: [],
+      reversed: false,
+      hold: true,
+      volume: 0,
+      fadeIn: 0,
+      fadeOut: 0,
+    };
+    const clips = base.clips.map((c) => (c.trackId === clip.trackId && c.start >= at - 1e-6 ? { ...c, start: c.start + FREEZE_LEN } : c));
+    const next = { ...base, clips: [...clips, frozen] };
+    return clip.trackId === mainTrack(p)?.id ? rippleMain(next) : next;
+  });
+  store.toast('Froze 2 seconds on that frame.');
 }
 
 export function updateClip(id: string, patch: Partial<Clip> | ((c: Clip) => Partial<Clip>), coalesceKey?: string) {

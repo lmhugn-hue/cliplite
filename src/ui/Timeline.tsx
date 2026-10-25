@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { deleteSelected, dropMediaAt, duplicateSelected, splitAtPlayhead } from '../actions';
+import { deleteSelected, dropMediaAt, duplicateSelected, freezeAtPlayhead, splitAtPlayhead } from '../actions';
 import { clipEnd, mainTrack, maxDuration, MIN_CLIP, overlaps, projectDuration, pruneTracks, rippleMain, trackKindFor } from '../model';
 import { playback } from '../render/preview';
 import { clock, store, useClock, useStore } from '../store';
@@ -84,6 +84,7 @@ export function Timeline() {
         <button onClick={() => store.redo()} title="Redo (Ctrl+Shift+Z)"><Icon name="redo" /></button>
         <span className="sep" />
         <button onClick={splitAtPlayhead} title="Split at playhead (S)"><Icon name="split" /> Split</button>
+        <button onClick={freezeAtPlayhead} title="Hold the frame under the playhead for 2 seconds">Freeze</button>
         <button onClick={deleteSelected} disabled={!selectedId} title="Delete (Del)"><Icon name="trash" /> Delete</button>
         <button onClick={duplicateSelected} disabled={!selectedId} title="Duplicate (Ctrl+D)"><Icon name="copy" /> Duplicate</button>
         <span className="sep" />
@@ -310,7 +311,7 @@ function ClipView({ clip, pps, selected, isMain }: { clip: Clip; pps: number; se
     const siblings = p0.clips.filter((c) => c.trackId === orig.trackId && c.id !== orig.id);
     const prevEnd = magneticMain ? 0 : siblings.filter((c) => clipEnd(c) <= orig.start + 1e-6).reduce((m, c) => Math.max(m, clipEnd(c)), 0);
     const nextStart = magneticMain ? Infinity : siblings.filter((c) => c.start >= origEnd - 1e-6).reduce((m, c) => Math.min(m, c.start), Infinity);
-    const timed = orig.kind === 'video' || orig.kind === 'audio';
+        const timed = (orig.kind === 'video' || orig.kind === 'audio') && !orig.hold;
     store.beginGesture();
     const move = (ev: PointerEvent) => {
       const dt = (ev.clientX - startX) / pps;
@@ -340,7 +341,10 @@ function ClipView({ clip, pps, selected, isMain }: { clip: Clip; pps: number; se
     <div className={`clip clip-${clip.kind}${selected ? ' selected' : ''}`} style={style} onPointerDown={startMove}>
       <div className="clip-handle left" onPointerDown={(e) => startTrim(e, 'left')} />
       <div className="clip-label">
-        {clip.speed !== 1 && <span className="badge">{clip.speed.toFixed(2).replace(/\.?0+$/, '')}x</span>}
+        {clip.hold && <span className="badge">Freeze</span>}
+        {clip.reversed && <span className="badge">Rev</span>}
+        {!clip.hold && clip.curve.length >= 2 && <span className="badge">Ramp</span>}
+        {!clip.hold && clip.curve.length < 2 && clip.speed !== 1 && <span className="badge">{clip.speed.toFixed(2).replace(/\.?0+$/, '')}x</span>}
         {lutName && <span className="badge">{lutName}</span>}
         <span className="clip-name">{label}</span>
       </div>

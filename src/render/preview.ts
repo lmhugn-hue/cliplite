@@ -1,5 +1,5 @@
 import type { Clip } from '../types';
-import { clipEnd, fadeFactor, outputSize, projectDuration, sourceTime } from '../model';
+import { clipEnd, fadeFactor, outputSize, projectDuration, rateAt, sourceTime } from '../model';
 import { clock, store } from '../store';
 import { Compositor } from './compositor';
 import { buildLayers, type FrameSource } from './layers';
@@ -140,9 +140,15 @@ export class PreviewEngine {
         continue;
       }
       const hasAudio = clip.kind === 'audio' || (media[clip.mediaId!]?.record.hasAudio ?? false);
-      const vol = muted.has(clip.trackId) || !hasAudio ? 0 : clip.volume * fadeFactor(clip, t);
+      const vol = muted.has(clip.trackId) || !hasAudio || clip.hold || clip.reversed ? 0 : clip.volume * fadeFactor(clip, t);
       if (entry.gain) entry.gain.gain.value = vol;
-      el.playbackRate = clip.speed;
+      el.preservesPitch = clip.preservePitch;
+      el.playbackRate = Math.min(16, Math.max(0.0625, clip.hold ? 1 : rateAt(clip, t)));
+      if (clip.hold || clip.reversed) {
+        if (!el.paused) el.pause();
+        if (!el.seeking && Math.abs(el.currentTime - target) > 0.03) el.currentTime = target;
+        continue;
+      }
       if (playing) {
         if (el.paused) {
           el.currentTime = target;

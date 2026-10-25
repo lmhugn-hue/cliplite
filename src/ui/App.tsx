@@ -26,7 +26,7 @@ export function App() {
       try {
         await restoreMedia();
         const saved = await db.loadProject();
-        if (saved?.version === 1) store.set({ project: saved });
+        if (saved?.version === 1) store.set({ project: { ...saved, clips: saved.clips.map((c) => ({ ...c, curve: c.curve ?? [], preservePitch: c.preservePitch ?? true, reversed: c.reversed ?? false, hold: c.hold ?? false })) } });
         const luts = (await db.loadLuts()) ?? [];
         const custom = luts.flatMap((l) => {
           try {
